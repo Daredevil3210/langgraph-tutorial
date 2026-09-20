@@ -1,0 +1,12 @@
+.env
+.vscode/
+.idea/
+.ipynb_checkpoints/
+replacements.txt
+all-MiniLM-L6-v2/
+.msi
+output/
+CLAUDE.local.md
+.langgraph_api/
+.antigravity_cli/
+test1.ipynb
