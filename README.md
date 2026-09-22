@@ -28,7 +28,12 @@ langgraph/
 │   ├── 08_Dynamic_send.ipynb    # Send 动态分发子任务
 │   ├── 09_command.ipynb         # Command 在节点内更新图状态
 │   ├── 10_fan_in_and.ipynb      # 多路扇入（fan-in）汇合
-│   └── 11_mapreduce.ipynb       # Map-Reduce 模式（mapper/router/reducer + Send）
+│   ├── 11_mapreduce.ipynb       # Map-Reduce 模式（mapper/router/reducer + Send）
+│   ├── 12_static_loop.ipynb     # 静态边与条件路由构建工具调用循环
+│   ├── 13_loop_goto.ipynb       # Command.goto 动态控制工具调用循环
+│   ├── 14_remaining_steps.ipynb # RemainingSteps：根据剩余步数结束循环
+│   ├── 15_end_loop.ipynb        # recursion_limit 与 GraphRecursionError
+│   └── 16_retry.ipynb           # RetryPolicy：节点异常重试
 ├── requirements_full.txt # 完整依赖清单（LangChain / LangGraph / Jupyter 等）
 └── .env                  # 环境变量（API Key 等，不纳入版本控制）
 ```
@@ -62,6 +67,11 @@ langgraph/
 | 09_command | `Command`：节点内直接更新状态并指定后继节点 |
 | 10_fan_in_and | 多路扇入：多个节点汇聚到同一目标节点（AND 汇合） |
 | 11_mapreduce | Map-Reduce：mapper 拆分子任务 → 并行执行 → reducer 汇总 |
+| 12_static_loop | 静态边 + 条件路由：在 LLM 与工具节点间循环，模拟工具失败后的再次调用 |
+| 13_loop_goto | 使用 `Command(update=..., goto=...)` 更新消息并动态选择工具或输出节点 |
+| 14_remaining_steps | 使用 `RemainingSteps` 读取剩余超步数，在步数不足时路由到 END |
+| 15_end_loop | 设置 `recursion_limit`，捕获 `GraphRecursionError` 并结束循环示例 |
+| 16_retry | 使用 `RetryPolicy(max_attempts=3, jitter=False)`，演示节点异常重试及耗尽后的处理 |
 
 ## 环境准备
 
@@ -74,6 +84,15 @@ pip install -r requirements_full.txt
 ```
 
 然后用 Jupyter Notebook 逐个打开 `chapter01/`、`chapter02/` 下的 notebook 运行即可。
+
+`chapter02/12_static_loop.ipynb` 和 `13_loop_goto.ipynb` 需要配置 DeepSeek API Key；天气和新闻工具返回的是硬编码演示数据，不是实时查询结果。工具失败由随机数模拟，运行过程和输出可能不同。
+
+`14_remaining_steps.ipynb`、`15_end_loop.ipynb` 和 `16_retry.ipynb` 不需要 LLM API Key，可用于学习循环步数限制和异常重试。其中 `16_retry` 会主动抛出 `HTTPError` 来演示重试耗尽的处理。
+
+## 版本发布
+
+- [v0.3.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.3.0)：新增第二章 12–16，涵盖工具调用循环、剩余步数、循环终止与节点重试。
+- 完整版本记录见 [Releases](https://github.com/Daredevil3210/langgraph-tutorial/releases)。
 
 ## 许可证
 
