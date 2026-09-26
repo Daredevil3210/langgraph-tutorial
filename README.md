@@ -33,7 +33,10 @@ langgraph/
 │   ├── 13_loop_goto.ipynb       # Command.goto 动态控制工具调用循环
 │   ├── 14_remaining_steps.ipynb # RemainingSteps：根据剩余步数结束循环
 │   ├── 15_end_loop.ipynb        # recursion_limit 与 GraphRecursionError
-│   └── 16_retry.ipynb           # RetryPolicy：节点异常重试
+│   ├── 16_retry.ipynb           # RetryPolicy：节点异常重试
+│   └── 17_cache.ipynb           # InMemoryCache 与 CachePolicy：节点结果缓存
+├── chapter03/            # 第三章：检查点与会话状态
+│   └── 01_in_memory.ipynb      # InMemorySaver：按 thread_id 保存对话状态
 ├── requirements_full.txt # 完整依赖清单（LangChain / LangGraph / Jupyter 等）
 └── .env                  # 环境变量（API Key 等，不纳入版本控制）
 ```
@@ -72,6 +75,11 @@ langgraph/
 | 14_remaining_steps | 使用 `RemainingSteps` 读取剩余超步数，在步数不足时路由到 END |
 | 15_end_loop | 设置 `recursion_limit`，捕获 `GraphRecursionError` 并结束循环示例 |
 | 16_retry | 使用 `RetryPolicy(max_attempts=3, jitter=False)`，演示节点异常重试及耗尽后的处理 |
+| 17_cache | 使用 `InMemoryCache` 和 `CachePolicy(ttl=20)`，对比相同与不同输入下的节点调用 |
+
+## 内容概览（chapter03）
+
+- `01_in_memory`：使用 `InMemorySaver` 保存图检查点，通过相同 `thread_id` 延续对话，并使用不同 `thread_id` 区分会话。
 
 ## 环境准备
 
@@ -83,14 +91,19 @@ pip install -r requirements_full.txt
 # 在 .env 中填写 DEEPSEEK_API_KEY、DEEPSEEK_BASE_URL 等变量
 ```
 
-然后用 Jupyter Notebook 逐个打开 `chapter01/`、`chapter02/` 下的 notebook 运行即可。
+然后用 Jupyter Notebook 逐个打开 `chapter01/`、`chapter02/`、`chapter03/` 下的 notebook 运行即可。
 
 `chapter02/12_static_loop.ipynb` 和 `13_loop_goto.ipynb` 需要配置 DeepSeek API Key；天气和新闻工具返回的是硬编码演示数据，不是实时查询结果。工具失败由随机数模拟，运行过程和输出可能不同。
 
 `14_remaining_steps.ipynb`、`15_end_loop.ipynb` 和 `16_retry.ipynb` 不需要 LLM API Key，可用于学习循环步数限制和异常重试。其中 `16_retry` 会主动抛出 `HTTPError` 来演示重试耗尽的处理。
 
+`chapter02/17_cache.ipynb` 不需要 LLM API Key，使用延时模拟耗时节点，并将缓存有效期设为 20 秒。观察缓存过期时，应确保距离对应缓存结果写入已超过该有效期。
+
+`chapter03/01_in_memory.ipynb` 需要配置 DeepSeek API Key。请按顺序运行单元格：相同 `thread_id` 使用同一会话状态，不同 `thread_id` 使用独立会话。`InMemoryCache` 和 `InMemorySaver` 的数据都只保存在当前进程内存中，重启内核后不会保留。
+
 ## 版本发布
 
+- [v0.4.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.4.0)：新增节点缓存与内存检查点示例，开始第三章的会话状态学习。
 - [v0.3.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.3.0)：新增第二章 12–16，涵盖工具调用循环、剩余步数、循环终止与节点重试。
 - 完整版本记录见 [Releases](https://github.com/Daredevil3210/langgraph-tutorial/releases)。
 
