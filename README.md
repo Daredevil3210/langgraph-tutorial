@@ -36,7 +36,9 @@ langgraph/
 │   ├── 16_retry.ipynb           # RetryPolicy：节点异常重试
 │   └── 17_cache.ipynb           # InMemoryCache 与 CachePolicy：节点结果缓存
 ├── chapter03/            # 第三章：检查点与会话状态
-│   └── 01_in_memory.ipynb      # InMemorySaver：按 thread_id 保存对话状态
+│   ├── 01_in_memory.ipynb      # InMemorySaver：按 thread_id 保存对话状态
+│   ├── 02_in_SQL.ipynb         # PostgresSaver：将检查点保存到 PostgreSQL
+│   └── 03_history_state.ipynb  # 查询历史、最新与指定检查点的状态
 ├── requirements_full.txt # 完整依赖清单（LangChain / LangGraph / Jupyter 等）
 └── .env                  # 环境变量（API Key 等，不纳入版本控制）
 ```
@@ -80,6 +82,8 @@ langgraph/
 ## 内容概览（chapter03）
 
 - `01_in_memory`：使用 `InMemorySaver` 保存图检查点，通过相同 `thread_id` 延续对话，并使用不同 `thread_id` 区分会话。
+- `02_in_SQL`：使用 `PostgresSaver` 和 `setup()` 初始化检查点表，在数据库连接的 `with` 作用域内运行图，将会话状态保存到 PostgreSQL。
+- `03_history_state`：并行生成指定主题的诗歌与笑话，汇总结果；通过 `get_state_history()`、`get_state()` 及 `checkpoint_id` 查询历史、最新和指定检查点状态。
 
 ## 环境准备
 
@@ -101,8 +105,19 @@ pip install -r requirements_full.txt
 
 `chapter03/01_in_memory.ipynb` 需要配置 DeepSeek API Key。请按顺序运行单元格：相同 `thread_id` 使用同一会话状态，不同 `thread_id` 使用独立会话。`InMemoryCache` 和 `InMemorySaver` 的数据都只保存在当前进程内存中，重启内核后不会保留。
 
+第三章的 `02_in_SQL.ipynb` 和 `03_history_state.ipynb` 同样需要 DeepSeek API Key。历史状态示例应按单元格顺序运行，使用本次运行产生的 `checkpoint_id`，不要复用其他内核中的内存检查点 ID。
+
+运行 `02_in_SQL.ipynb` 前，先启动 PostgreSQL，创建数据库和具有建表、读写权限的账号，然后在本地 `.env` 中配置连接地址（将占位内容替换为实际配置）：
+
+```dotenv
+DB_URL=postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?sslmode=disable
+```
+
+数据库驱动与检查点依赖已列在 `requirements_full.txt` 中。首次使用时执行 `checkpointer.setup()` 初始化检查点表；数据库本身需要预先创建。首次测试对话记忆时，取消“你好，我是老王”调用前的注释，成功保存后再用相同 `thread_id` 提问“我是谁”。数据库连接配置由环境变量读取，`.env` 和 `.env.*` 不纳入版本控制。
+
 ## 版本发布
 
+- [v0.5.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.5.0)：新增 PostgreSQL 检查点与历史状态查询，补充第三章学习说明。
 - [v0.4.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.4.0)：新增节点缓存与内存检查点示例，开始第三章的会话状态学习。
 - [v0.3.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.3.0)：新增第二章 12–16，涵盖工具调用循环、剩余步数、循环终止与节点重试。
 - 完整版本记录见 [Releases](https://github.com/Daredevil3210/langgraph-tutorial/releases)。
