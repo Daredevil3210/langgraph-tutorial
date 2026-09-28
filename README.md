@@ -35,10 +35,16 @@ langgraph/
 │   ├── 15_end_loop.ipynb        # recursion_limit 与 GraphRecursionError
 │   ├── 16_retry.ipynb           # RetryPolicy：节点异常重试
 │   └── 17_cache.ipynb           # InMemoryCache 与 CachePolicy：节点结果缓存
-├── chapter03/            # 第三章：检查点与会话状态
+├── chapter03/            # 第三章：检查点、状态恢复与长期记忆
 │   ├── 01_in_memory.ipynb      # InMemorySaver：按 thread_id 保存对话状态
 │   ├── 02_in_SQL.ipynb         # PostgresSaver：将检查点保存到 PostgreSQL
-│   └── 03_history_state.ipynb  # 查询历史、最新与指定检查点的状态
+│   ├── 03_history_state.ipynb  # 查询历史、最新与指定检查点的状态
+│   ├── 04_error.ipynb          # 模拟并行节点失败，保存检查点
+│   ├── 05_find_error.ipynb     # 查询失败会话的历史状态
+│   ├── 06_fix_error.ipynb      # 修复节点后从失败处继续执行
+│   ├── 07_replay.ipynb         # 从指定历史检查点重放
+│   ├── 08_fork.ipynb           # update_state 与 as_node：状态分叉
+│   └── 09_store.ipynb          # PostgresStore：保存与查询用户偏好
 ├── requirements_full.txt # 完整依赖清单（LangChain / LangGraph / Jupyter 等）
 └── .env                  # 环境变量（API Key 等，不纳入版本控制）
 ```
@@ -84,6 +90,12 @@ langgraph/
 - `01_in_memory`：使用 `InMemorySaver` 保存图检查点，通过相同 `thread_id` 延续对话，并使用不同 `thread_id` 区分会话。
 - `02_in_SQL`：使用 `PostgresSaver` 和 `setup()` 初始化检查点表，在数据库连接的 `with` 作用域内运行图，将会话状态保存到 PostgreSQL。
 - `03_history_state`：并行生成指定主题的诗歌与笑话，汇总结果；通过 `get_state_history()`、`get_state()` 及 `checkpoint_id` 查询历史、最新和指定检查点状态。
+- `04_error`：在并行的笑话节点中主动抛出异常，演示执行失败与检查点保存。
+- `05_find_error`：使用同一数据库和 `thread_id`，通过 `get_state_history()` 查看失败执行的历史状态。
+- `06_fix_error`：移除人为异常，使用 `graph.invoke(None, config=...)` 恢复未完成的执行。
+- `07_replay`：查找写诗、写笑话之前的历史检查点，使用该检查点的配置重新执行后续节点。
+- `08_fork`：通过结构化输出选择写诗或笑话；从历史检查点调用 `update_state()`，修改输入或路由结果，使用返回的配置继续执行新分支。
+- `09_store`：使用 `PostgresStore`，按用户命名空间与 `preferences` 键保存偏好，再通过命名空间前缀查询记录。
 
 ## 环境准备
 
@@ -115,8 +127,18 @@ DB_URL=postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?sslmode
 
 数据库驱动与检查点依赖已列在 `requirements_full.txt` 中。首次使用时执行 `checkpointer.setup()` 初始化检查点表；数据库本身需要预先创建。首次测试对话记忆时，取消“你好，我是老王”调用前的注释，成功保存后再用相同 `thread_id` 提问“我是谁”。数据库连接配置由环境变量读取，`.env` 和 `.env.*` 不纳入版本控制。
 
+### 第三章进阶示例的运行顺序
+
+- `04_error` → `05_find_error` → `06_fix_error`：三个示例使用同一 `DB_URL` 和 `thread_id="chapter03-05"`。先通过 `02_in_SQL` 的 `checkpointer.setup()` 初始化检查点表，或在 `04_error` 中取消该调用前的注释。`04_error` 的“人为抛异常”是预期的教学行为；随后运行 `05_find_error` 查看状态，再运行 `06_fix_error` 恢复执行。同一超步中已成功完成并保存结果的节点可在恢复时复用结果；延时 5 秒不保证另一个模型调用已经成功完成。
+- `07_replay`：依次运行单元格，先产生检查点，再从选中的历史配置重放。重放会重新调用后续模型节点，生成结果可能不同于原结果。
+- `08_fork`：依次运行单元格，保持同一个内存检查点对象。使用 `update_state()` 返回的配置启动分支；重启内核后需要重新产生历史检查点。示例的结构化输出只声明 `poem` 和 `joke` 两种模式，兜底节点不是模型异常处理器。
+- `09_store`：只需要 PostgreSQL 和 `.env` 中的 `DB_URL`，不需要 LLM API Key。`store.setup()` 初始化长期记忆表；重复写入同一命名空间和键会替换该记录的值。示例查询默认最多返回 10 条，数据增多时可使用 `limit` 和 `offset` 分页。
+
+`04_error`–`08_fork` 使用 DeepSeek 模型，需要 API Key；其中 `04_error`–`07_replay` 还需要 PostgreSQL。示例中的 `topic_index` 是普通全局变量，不属于检查点状态，重新运行初始化代码会将其重置。所有数据库示例从本地环境变量读取连接地址，请勿将真实数据库密码写入 Notebook。
+
 ## 版本发布
 
+- [v0.6.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.6.0)：新增异常恢复、历史重放、状态分叉和 PostgreSQL 长期记忆示例。
 - [v0.5.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.5.0)：新增 PostgreSQL 检查点与历史状态查询，补充第三章学习说明。
 - [v0.4.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.4.0)：新增节点缓存与内存检查点示例，开始第三章的会话状态学习。
 - [v0.3.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.3.0)：新增第二章 12–16，涵盖工具调用循环、剩余步数、循环终止与节点重试。
