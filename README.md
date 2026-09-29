@@ -44,7 +44,15 @@ langgraph/
 │   ├── 06_fix_error.ipynb      # 修复节点后从失败处继续执行
 │   ├── 07_replay.ipynb         # 从指定历史检查点重放
 │   ├── 08_fork.ipynb           # update_state 与 as_node：状态分叉
-│   └── 09_store.ipynb          # PostgresStore：保存与查询用户偏好
+│   ├── 09_store.ipynb          # 长期偏好与检查点：个性化多轮对话
+│   └── 10_context.ipynb        # Runtime 上下文：按会员等级调整回复
+├── chapter04/            # 第四章：人工介入（Human-in-the-loop）
+│   ├── 01_HITL.ipynb           # interrupt 与 Command.resume：输入姓名
+│   ├── 02_parallel.ipynb       # 并行中断：按中断 ID 恢复多个节点
+│   ├── 03_approve.ipynb        # 人工批准或拒绝模型调用
+│   ├── 04_approve_edit.ipynb   # 审核并修改模型生成的诗句
+│   ├── 05_tool_approve.ipynb   # 工具内部中断：人工批准天气查询
+│   └── 06_single_node.ipynb    # 单节点内按顺序处理中断
 ├── requirements_full.txt # 完整依赖清单（LangChain / LangGraph / Jupyter 等）
 └── .env                  # 环境变量（API Key 等，不纳入版本控制）
 ```
@@ -95,7 +103,17 @@ langgraph/
 - `06_fix_error`：移除人为异常，使用 `graph.invoke(None, config=...)` 恢复未完成的执行。
 - `07_replay`：查找写诗、写笑话之前的历史检查点，使用该检查点的配置重新执行后续节点。
 - `08_fork`：通过结构化输出选择写诗或笑话；从历史检查点调用 `update_state()`，修改输入或路由结果，使用返回的配置继续执行新分支。
-- `09_store`：使用 `PostgresStore`，按用户命名空间与 `preferences` 键保存偏好，再通过命名空间前缀查询记录。
+- `09_store`：使用 `PostgresStore` 保存、查询偏好，通过 `runtime.store` 读取当前用户档案；结合 `PostgresSaver` 保存会话消息和已加载偏好，实现个性化多轮对话。
+- `10_context`：使用 `UserContext`、`context_schema` 和 `Runtime.context` 传递用户名与会员等级，对比 VIP 和普通用户的回复要求。
+
+## 内容概览（chapter04）
+
+- `01_HITL`：通过 `interrupt()` 暂停图，获取姓名后使用 `Command(resume=...)` 恢复执行。
+- `02_parallel`：姓名和年龄节点并行中断，使用中断 ID 到回答的映射恢复各节点。
+- `03_approve`：人工决定是否调用模型，使用 `Command(goto=..., update=...)` 路由到生成或拒绝节点。
+- `04_approve_edit`：生成诗歌后暂停，让用户修改内容；直接回车可保留原诗。
+- `05_tool_approve`：在天气工具内部中断，人工批准或拒绝工具执行，再将结果交回模型。
+- `06_single_node`：同一节点内依次询问姓名、年龄、性别，逐次恢复三个中断。
 
 ## 环境准备
 
@@ -107,7 +125,7 @@ pip install -r requirements_full.txt
 # 在 .env 中填写 DEEPSEEK_API_KEY、DEEPSEEK_BASE_URL 等变量
 ```
 
-然后用 Jupyter Notebook 逐个打开 `chapter01/`、`chapter02/`、`chapter03/` 下的 notebook 运行即可。
+然后用 Jupyter Notebook 逐个打开 `chapter01/`、`chapter02/`、`chapter03/`、`chapter04/` 下的 notebook 运行即可。
 
 `chapter02/12_static_loop.ipynb` 和 `13_loop_goto.ipynb` 需要配置 DeepSeek API Key；天气和新闻工具返回的是硬编码演示数据，不是实时查询结果。工具失败由随机数模拟，运行过程和输出可能不同。
 
@@ -132,12 +150,22 @@ DB_URL=postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?sslmode
 - `04_error` → `05_find_error` → `06_fix_error`：三个示例使用同一 `DB_URL` 和 `thread_id="chapter03-05"`。先通过 `02_in_SQL` 的 `checkpointer.setup()` 初始化检查点表，或在 `04_error` 中取消该调用前的注释。`04_error` 的“人为抛异常”是预期的教学行为；随后运行 `05_find_error` 查看状态，再运行 `06_fix_error` 恢复执行。同一超步中已成功完成并保存结果的节点可在恢复时复用结果；延时 5 秒不保证另一个模型调用已经成功完成。
 - `07_replay`：依次运行单元格，先产生检查点，再从选中的历史配置重放。重放会重新调用后续模型节点，生成结果可能不同于原结果。
 - `08_fork`：依次运行单元格，保持同一个内存检查点对象。使用 `update_state()` 返回的配置启动分支；重启内核后需要重新产生历史检查点。示例的结构化输出只声明 `poem` 和 `joke` 两种模式，兜底节点不是模型异常处理器。
-- `09_store`：只需要 PostgreSQL 和 `.env` 中的 `DB_URL`，不需要 LLM API Key。`store.setup()` 初始化长期记忆表；重复写入同一命名空间和键会替换该记录的值。示例查询默认最多返回 10 条，数据增多时可使用 `limit` 和 `offset` 分页。
+- `09_store`：先运行第一个单元格初始化长期记忆表并写入用户偏好，这部分只需要 PostgreSQL 和 `.env` 中的 `DB_URL`；第二个单元格的个性化对话还需要 DeepSeek API Key。重复写入同一命名空间和键会替换该记录的值；查询默认最多返回 10 条，数据增多时可使用 `limit` 和 `offset` 分页。同一用户的多轮对话使用相同 `thread_id`；不同用户应使用不同会话编号，避免复用他人的消息和偏好。会话已加载偏好后会跳过 Store 查询，若数据库偏好发生变化，需要主动刷新或使用新会话。
+- `10_context`：只需要 DeepSeek API Key。`context` 在每次调用时提供用户身份与会员等级，节点据此生成系统提示词；它不会自动成为模型输入。此示例没有配置检查点，两次调用分别演示不同会员等级，跨调用不会自动恢复聊天历史。优惠活动问题用于演示回复语气，示例没有接入实时优惠查询工具。
 
 `04_error`–`08_fork` 使用 DeepSeek 模型，需要 API Key；其中 `04_error`–`07_replay` 还需要 PostgreSQL。示例中的 `topic_index` 是普通全局变量，不属于检查点状态，重新运行初始化代码会将其重置。所有数据库示例从本地环境变量读取连接地址，请勿将真实数据库密码写入 Notebook。
 
+### 第四章的运行要求
+
+`01_HITL`、`02_parallel` 和 `06_single_node` 不需要 LLM API Key；`03_approve`、`04_approve_edit`、`05_tool_approve` 需要 DeepSeek API Key。所有第四章示例使用内存检查点，不需要 PostgreSQL。
+
+请在支持 `input()` 的 Jupyter 内核中按顺序运行单元格。首次执行返回 `__interrupt__` 信息，输入答案或审批结果后，用同一个检查点对象及 `thread_id` 调用 `Command(resume=...)`。并行中断使用各自的中断 ID；同一节点内的多个中断按调用顺序逐次恢复。年龄请输入整数，性别示例输入 `male` 或 `female`。重启内核后需要重新执行初始化和首次调用，不能继续使用旧的内存中断。
+
+`interrupt()` 暂停的是图执行；`input()` 是 Notebook 中收集人工回答的方式。恢复时节点会从开头重新执行，避免在中断前执行不可重复的操作。天气工具返回硬编码演示数据，不查询真实天气；工具审批示例需要模型产生天气工具调用，若未产生工具调用，则不会出现该审批中断。
+
 ## 版本发布
 
+- [v0.7.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.7.0)：新增运行时上下文与第四章人工介入示例，完善长期记忆对话。
 - [v0.6.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.6.0)：新增异常恢复、历史重放、状态分叉和 PostgreSQL 长期记忆示例。
 - [v0.5.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.5.0)：新增 PostgreSQL 检查点与历史状态查询，补充第三章学习说明。
 - [v0.4.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.4.0)：新增节点缓存与内存检查点示例，开始第三章的会话状态学习。
