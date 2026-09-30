@@ -52,7 +52,13 @@ langgraph/
 │   ├── 03_approve.ipynb        # 人工批准或拒绝模型调用
 │   ├── 04_approve_edit.ipynb   # 审核并修改模型生成的诗句
 │   ├── 05_tool_approve.ipynb   # 工具内部中断：人工批准天气查询
-│   └── 06_single_node.ipynb    # 单节点内按顺序处理中断
+│   ├── 06_single_node.ipynb    # 单节点内按顺序处理中断
+│   ├── 07_HITL_checkpoint.ipynb # 顺序中断前后的检查点历史
+│   ├── 08_parallel_checkpoint.ipynb # 并行中断前后的检查点历史
+│   ├── 09_half_checkpoint.ipynb # 一个节点中断、另一个节点完成
+│   ├── 10_static_interrupt.ipynb # 节点执行前后的静态断点
+│   ├── 11_static_parallel.ipynb # 并行分支中的静态断点
+│   └── 12_error_static.ipynb   # 调用时设置断点及恢复时的参数变化
 ├── requirements_full.txt # 完整依赖清单（LangChain / LangGraph / Jupyter 等）
 └── .env                  # 环境变量（API Key 等，不纳入版本控制）
 ```
@@ -114,6 +120,12 @@ langgraph/
 - `04_approve_edit`：生成诗歌后暂停，让用户修改内容；直接回车可保留原诗。
 - `05_tool_approve`：在天气工具内部中断，人工批准或拒绝工具执行，再将结果交回模型。
 - `06_single_node`：同一节点内依次询问姓名、年龄、性别，逐次恢复三个中断。
+- `07_HITL_checkpoint`：在姓名、年龄的顺序中断及恢复后查询 `get_state_history()`，观察检查点历史。
+- `08_parallel_checkpoint`：两个节点并行等待人工输入，按中断 ID 恢复后查看历史状态。
+- `09_half_checkpoint`：姓名节点中断、年龄节点正常完成，观察同一超步内的结果保存与恢复。
+- `10_static_interrupt`：通过 `compile(interrupt_before=..., interrupt_after=...)` 配置节点执行前后的断点，使用 `invoke(None, ...)` 逐次继续。
+- `11_static_parallel`：在两条并行分支中配置静态断点，观察每次暂停和恢复时各节点的执行情况。
+- `12_error_static`：在 `invoke()` 时传入静态断点，对比恢复时继续传入断点参数与省略这些参数的行为。
 
 ## 环境准备
 
@@ -157,14 +169,21 @@ DB_URL=postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?sslmode
 
 ### 第四章的运行要求
 
-`01_HITL`、`02_parallel` 和 `06_single_node` 不需要 LLM API Key；`03_approve`、`04_approve_edit`、`05_tool_approve` 需要 DeepSeek API Key。所有第四章示例使用内存检查点，不需要 PostgreSQL。
+`01_HITL`、`02_parallel`、`06_single_node` 和 `07`–`12` 不需要 LLM API Key；`03_approve`、`04_approve_edit`、`05_tool_approve` 需要 DeepSeek API Key。所有第四章示例使用内存检查点，不需要 PostgreSQL。
 
 请在支持 `input()` 的 Jupyter 内核中按顺序运行单元格。首次执行返回 `__interrupt__` 信息，输入答案或审批结果后，用同一个检查点对象及 `thread_id` 调用 `Command(resume=...)`。并行中断使用各自的中断 ID；同一节点内的多个中断按调用顺序逐次恢复。年龄请输入整数，性别示例输入 `male` 或 `female`。重启内核后需要重新执行初始化和首次调用，不能继续使用旧的内存中断。
 
 `interrupt()` 暂停的是图执行；`input()` 是 Notebook 中收集人工回答的方式。恢复时节点会从开头重新执行，避免在中断前执行不可重复的操作。天气工具返回硬编码演示数据，不查询真实天气；工具审批示例需要模型产生天气工具调用，若未产生工具调用，则不会出现该审批中断。
 
+`07_HITL_checkpoint`、`08_parallel_checkpoint` 和 `09_half_checkpoint` 请按单元格顺序运行；其中 `08_parallel_checkpoint` 会要求输入姓名和整数年龄，其余两个示例直接使用预设回答。检查点历史与同一超步内成功节点的待合并写入是不同层次的记录，不应把每次调用 `interrupt()` 都理解成新增一份完整检查点。
+
+`10_static_interrupt`、`11_static_parallel` 和 `12_error_static` 使用静态断点：恢复时传入 `None`，无需提供 `Command(resume=...)` 的人工回答。检查下一步可以调用 `graph.get_state(config).next`，空元组表示没有待执行节点。静态断点按超步边界暂停，并行图中某个节点上的断点也会影响同一超步的其他节点；同时设置节点前后断点时，不能简单按断点数量推算调用次数。
+
+`12_error_static` 的文件名用于提醒断点参数容易遗漏，该示例没有主动抛出异常：图在编译时未配置静态断点，前两次调用显式传入断点参数，后续调用省略参数，因此后续执行不会继续使用前两次调用临时设置的断点。
+
 ## 版本发布
 
+- [v0.8.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.8.0)：新增中断检查点、并行恢复与静态断点示例。
 - [v0.7.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.7.0)：新增运行时上下文与第四章人工介入示例，完善长期记忆对话。
 - [v0.6.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.6.0)：新增异常恢复、历史重放、状态分叉和 PostgreSQL 长期记忆示例。
 - [v0.5.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.5.0)：新增 PostgreSQL 检查点与历史状态查询，补充第三章学习说明。
