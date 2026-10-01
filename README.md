@@ -59,7 +59,11 @@ langgraph/
 │   ├── 10_static_interrupt.ipynb # 节点执行前后的静态断点
 │   ├── 11_static_parallel.ipynb # 并行分支中的静态断点
 │   ├── 12_error_static.ipynb   # 调用时设置断点及恢复时的参数变化
-│   └── 13_tool_call.ipynb      # 手动实现模型与天气、新闻工具之间的调用循环
+│   ├── 13_tool_call.ipynb      # 手动实现模型与天气、新闻工具之间的调用循环
+│   ├── 14_tool_node.ipynb      # 使用内置 ToolNode 执行工具
+│   ├── 15_tool_node_runtime.ipynb # ToolRuntime 与 Command：工具更新状态
+│   ├── 16_wrap_tool_call.ipynb # 包装工具执行过程，按上下文配置重试
+│   └── 17_wrap_tool_call.ipynb # 按工具名称和参数缓存执行结果
 ├── hitl_demo/           # 本地 Agent Server / Studio 人工介入示例
 │   ├── langgraph.json          # 注册 graph、chat_graph，加载本地 .env
 │   └── src/
@@ -134,6 +138,10 @@ langgraph/
 - `11_static_parallel`：在两条并行分支中配置静态断点，观察每次暂停和恢复时各节点的执行情况。
 - `12_error_static`：在 `invoke()` 时传入静态断点，对比恢复时继续传入断点参数与省略这些参数的行为。
 - `13_tool_call`：通过 `@tool` 定义天气和新闻工具，使用 `bind_tools()`、自定义工具节点、`ToolMessage` 和条件路由实现模型与工具之间的循环。`MessagesState` 合并消息历史，额外的 `output` 字段保存最近一次模型返回的内容。
+- `14_tool_node`：使用内置 `ToolNode` 替代手写的工具执行节点，自动执行天气、新闻工具并生成工具结果消息。
+- `15_tool_node_runtime`：通过自动注入的 `ToolRuntime` 获取工具调用 ID；工具返回 `Command(update=...)`，同时更新 `weather_res` 或 `new_res` 与消息历史。
+- `16_wrap_tool_call`：通过 `wrap_tool_call` 包装工具执行过程，从 `UserContext.max_attempts` 读取尝试次数；捕获模拟的 `ConnectionError`，成功即停止，耗尽次数后返回失败消息。
+- `17_wrap_tool_call`：使用工具名称和参数的 JSON 字符串构造缓存键，重复查询命中缓存时跳过工具执行，并生成对应当前调用 ID 的工具消息。
 
 ## 本地服务示例（hitl_demo）
 
@@ -182,7 +190,7 @@ DB_URL=postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?sslmode
 
 ### 第四章的运行要求
 
-`01_HITL`、`02_parallel`、`06_single_node` 和 `07`–`12` 不需要 LLM API Key；`03_approve`、`04_approve_edit`、`05_tool_approve`、`13_tool_call` 需要 DeepSeek API Key。第四章的人工介入示例使用内存检查点，不需要 PostgreSQL；`13_tool_call` 未配置检查点，只在一次调用中维护消息历史。
+`01_HITL`、`02_parallel`、`06_single_node` 和 `07`–`12` 不需要 LLM API Key；`03_approve`、`04_approve_edit`、`05_tool_approve` 和 `13`–`17` 需要 DeepSeek API Key。第四章的人工介入示例使用内存检查点，不需要 PostgreSQL；`13`–`17` 未配置检查点，只在一次调用中维护消息历史。
 
 请在支持 `input()` 的 Jupyter 内核中按顺序运行单元格。首次执行返回 `__interrupt__` 信息，输入答案或审批结果后，用同一个检查点对象及 `thread_id` 调用 `Command(resume=...)`。并行中断使用各自的中断 ID；同一节点内的多个中断按调用顺序逐次恢复。年龄请输入整数，性别示例输入 `male` 或 `female`。重启内核后需要重新执行初始化和首次调用，不能继续使用旧的内存中断。
 
@@ -195,6 +203,15 @@ DB_URL=postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?sslmode
 `12_error_static` 的文件名用于提醒断点参数容易遗漏，该示例没有主动抛出异常：图在编译时未配置静态断点，前两次调用显式传入断点参数，后续调用省略参数，因此后续执行不会继续使用前两次调用临时设置的断点。
 
 `13_tool_call` 不包含人工审批：`llm_node` 让模型选择工具，`tool_node` 按名称和参数执行工具，`router` 根据最后一条模型消息是否包含 `tool_calls` 决定继续或结束。工具执行结果使用对应的 `tool_call_id` 写入 `ToolMessage`，供下一次模型调用读取。天气和新闻均为硬编码演示数据；模型可能一次请求多个工具，也可能分多轮请求。工具调用阶段的模型正文可能为空，`output` 会在后续模型回复时被覆盖。
+
+### ToolNode、状态更新、重试与缓存示例
+
+建议按 `13_tool_call` → `14_tool_node` → `15_tool_node_runtime` → `16_wrap_tool_call` → `17_wrap_tool_call` 的顺序学习。这些示例不包含人工审批，也不需要 PostgreSQL；天气与新闻工具返回模拟数据，不提供实时查询。
+
+- `14_tool_node`：图的执行路线仍是模型 → 工具 → 模型。`ToolNode` 接收工具列表，处理模型的调用请求；无需手动按名称查找工具或包装普通字符串结果。
+- `15_tool_node_runtime`：模型只提供城市或国内外新闻参数，`runtime` 由 `ToolNode` 自动注入，不暴露为模型参数。`Command.update` 将查询结果写入自定义状态字段，并通过 `ToolMessage` 让模型读取结果；只更新 `weather_res` 或 `new_res` 并不会自动把它传给模型。国内与国外新闻分支均返回状态更新命令。这里的 `Command` 未指定 `goto`，工具执行后回到模型仍由图的边决定。
+- `16_wrap_tool_call`：使用 `context=UserContext(max_attempts=3)` 为本次运行提供配置。每个工具请求最多尝试 3 次，包括第一次执行；失败概率为 70%，仅捕获 `ConnectionError`，没有等待间隔。重试期间不重新调用模型；三次都失败时返回工具失败消息，随后模型仍可能提出新的工具请求，新请求会重新获得尝试次数，因此这不是整轮对话的总次数限制。
+- `17_wrap_tool_call`：按顺序运行两个代码单元格，在同一内核中重复查询北京以观察缓存。缓存只保存工具返回的内容，命中时使用本次 `tool_call_id` 创建新的消息；模型本身仍会执行。`global_cache` 是进程内的普通字典，没有过期时间，重新运行初始化单元格或重启内核会清空缓存。参数 JSON 未排序，多参数工具中不同的键顺序可能形成不同缓存键。
 
 ### 启动 hitl_demo 本地服务
 
@@ -239,6 +256,7 @@ langgraph dev
 
 ## 版本发布
 
+- [v0.10.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.10.0)：新增内置 ToolNode、工具运行时状态更新、工具重试与结果缓存示例。
 - [v0.9.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.9.0)：新增工具调用 Notebook 和本地人工介入服务，支持天气工具的批准、拒绝与参数修改。
 - [v0.8.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.8.0)：新增中断检查点、并行恢复与静态断点示例。
 - [v0.7.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.7.0)：新增运行时上下文与第四章人工介入示例，完善长期记忆对话。
