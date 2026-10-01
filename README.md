@@ -1,6 +1,6 @@
 # LangGraph 学习教程
 
-基于 [LangGraph](https://www.langchain.com/langgraph) 的入门学习项目，通过 Jupyter Notebook 循序渐进地演示 Agent / 状态图（StateGraph）的核心概念与用法。
+基于 [LangGraph](https://www.langchain.com/langgraph) 的入门学习项目，通过 Jupyter Notebook 循序渐进地演示 Agent / 状态图（StateGraph）的核心概念与用法，并提供可在本地 Agent Server 中运行的人工介入示例。
 
 ## 目录结构
 
@@ -58,7 +58,14 @@ langgraph/
 │   ├── 09_half_checkpoint.ipynb # 一个节点中断、另一个节点完成
 │   ├── 10_static_interrupt.ipynb # 节点执行前后的静态断点
 │   ├── 11_static_parallel.ipynb # 并行分支中的静态断点
-│   └── 12_error_static.ipynb   # 调用时设置断点及恢复时的参数变化
+│   ├── 12_error_static.ipynb   # 调用时设置断点及恢复时的参数变化
+│   └── 13_tool_call.ipynb      # 手动实现模型与天气、新闻工具之间的调用循环
+├── hitl_demo/           # 本地 Agent Server / Studio 人工介入示例
+│   ├── langgraph.json          # 注册 graph、chat_graph，加载本地 .env
+│   └── src/
+│       ├── __init__.py
+│       ├── agent.py            # 顺序中断，收集姓名、年龄、性别
+│       └── chat_agent.py       # 天气工具调用的批准、拒绝与参数修改
 ├── requirements_full.txt # 完整依赖清单（LangChain / LangGraph / Jupyter 等）
 └── .env                  # 环境变量（API Key 等，不纳入版本控制）
 ```
@@ -126,6 +133,12 @@ langgraph/
 - `10_static_interrupt`：通过 `compile(interrupt_before=..., interrupt_after=...)` 配置节点执行前后的断点，使用 `invoke(None, ...)` 逐次继续。
 - `11_static_parallel`：在两条并行分支中配置静态断点，观察每次暂停和恢复时各节点的执行情况。
 - `12_error_static`：在 `invoke()` 时传入静态断点，对比恢复时继续传入断点参数与省略这些参数的行为。
+- `13_tool_call`：通过 `@tool` 定义天气和新闻工具，使用 `bind_tools()`、自定义工具节点、`ToolMessage` 和条件路由实现模型与工具之间的循环。`MessagesState` 合并消息历史，额外的 `output` 字段保存最近一次模型返回的内容。
+
+## 本地服务示例（hitl_demo）
+
+- `graph`（`src/agent.py:graph`）：在同一节点中依次询问姓名、年龄、性别，每次通过 `interrupt()` 暂停，收到回答后继续。
+- `chat_graph`（`src/chat_agent.py:chat_graph`）：模型产生天气工具调用后，一次提交本轮所有调用供人工审核；支持批准（`approve`）、拒绝（`reject`）和修改参数（`edit`），再将工具结果交给模型生成回复。
 
 ## 环境准备
 
@@ -169,7 +182,7 @@ DB_URL=postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?sslmode
 
 ### 第四章的运行要求
 
-`01_HITL`、`02_parallel`、`06_single_node` 和 `07`–`12` 不需要 LLM API Key；`03_approve`、`04_approve_edit`、`05_tool_approve` 需要 DeepSeek API Key。所有第四章示例使用内存检查点，不需要 PostgreSQL。
+`01_HITL`、`02_parallel`、`06_single_node` 和 `07`–`12` 不需要 LLM API Key；`03_approve`、`04_approve_edit`、`05_tool_approve`、`13_tool_call` 需要 DeepSeek API Key。第四章的人工介入示例使用内存检查点，不需要 PostgreSQL；`13_tool_call` 未配置检查点，只在一次调用中维护消息历史。
 
 请在支持 `input()` 的 Jupyter 内核中按顺序运行单元格。首次执行返回 `__interrupt__` 信息，输入答案或审批结果后，用同一个检查点对象及 `thread_id` 调用 `Command(resume=...)`。并行中断使用各自的中断 ID；同一节点内的多个中断按调用顺序逐次恢复。年龄请输入整数，性别示例输入 `male` 或 `female`。重启内核后需要重新执行初始化和首次调用，不能继续使用旧的内存中断。
 
@@ -181,8 +194,52 @@ DB_URL=postgresql://YOUR_USER:YOUR_PASSWORD@localhost:5432/YOUR_DATABASE?sslmode
 
 `12_error_static` 的文件名用于提醒断点参数容易遗漏，该示例没有主动抛出异常：图在编译时未配置静态断点，前两次调用显式传入断点参数，后续调用省略参数，因此后续执行不会继续使用前两次调用临时设置的断点。
 
+`13_tool_call` 不包含人工审批：`llm_node` 让模型选择工具，`tool_node` 按名称和参数执行工具，`router` 根据最后一条模型消息是否包含 `tool_calls` 决定继续或结束。工具执行结果使用对应的 `tool_call_id` 写入 `ToolMessage`，供下一次模型调用读取。天气和新闻均为硬编码演示数据；模型可能一次请求多个工具，也可能分多轮请求。工具调用阶段的模型正文可能为空，`output` 会在后续模型回复时被覆盖。
+
+### 启动 hitl_demo 本地服务
+
+使用 Python 3.11 或更高版本，先在仓库根目录安装 `requirements_full.txt` 中的依赖，其中已包含 `langgraph-cli[inmem]`。在本地创建 `hitl_demo/.env`，填写以下变量，并将占位内容替换为自己的配置：
+
+```dotenv
+DEEPSEEK_API_KEY=YOUR_DEEPSEEK_API_KEY
+# 如需在 Studio 中调试，配置自己的 LangSmith API Key
+LANGSMITH_API_KEY=YOUR_LANGSMITH_API_KEY
+```
+
+`langgraph.json` 中的 `.env` 路径相对于该配置文件，因此使用的是 `hitl_demo/.env`，不是仓库根目录的 `.env`。服务启动时会加载两个图，`chat_graph` 在模块导入时初始化 DeepSeek 模型，所以即使只调试收集信息的 `graph`，也需要准备 DeepSeek API Key。
+
+```bash
+# 从仓库根目录进入示例目录
+cd hitl_demo
+langgraph dev
+```
+
+根据终端输出打开 Studio 地址，或访问本地 API 文档 `http://127.0.0.1:2024/docs`。本地开发服务无需 Docker 或 PostgreSQL；更多启动选项见 [LangGraph 本地开发文档](https://docs.langchain.com/langsmith/local-dev-testing)。
+
+- 选择 `graph`：以空输入 `{}` 启动，在各次中断中依次提供姓名、整数年龄、`male` 或 `female`，恢复至完成。
+- 选择 `chat_graph`：传入用户消息，例如 `{"messages": [{"role": "user", "content": "今天北京天气怎么样？"}]}`；模型提出天气工具调用后，查看中断中的 `action_requests` 和 `review_configs`，提交审核决定。
+
+`chat_graph` 的恢复值为包含 `decisions` 列表的对象；列表按本轮工具调用顺序排列，每个调用对应一个决定。下面是单个调用的三种恢复值示例：
+
+```json
+{"decisions": [{"type": "approve"}]}
+```
+
+```json
+{"decisions": [{"type": "reject", "message": "暂不查询天气"}]}
+```
+
+```json
+{"decisions": [{"type": "edit", "edited_action": {"name": "get_weather", "args": {"city": "上海"}}}]}
+```
+
+在同一个服务线程中恢复执行；通过 SDK 或 API 调用时，在 `command` 的 `resume` 字段中传入上述对象。`edit` 分支只使用修改后的参数，仍执行原请求的工具；缺少对应决定时默认拒绝该调用。若模型继续请求工具，会再次中断。天气工具返回模拟结果，不提供实时天气查询。
+
+两个服务图都使用 `compile()` 导出，由 Agent Server 管理检查点；若直接在普通 Python 脚本中运行并恢复中断，需要自行配置检查点保存器与 `thread_id`。本地 `.env`、`.env.*`、服务运行数据和 Python 缓存均被 Git 忽略。
+
 ## 版本发布
 
+- [v0.9.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.9.0)：新增工具调用 Notebook 和本地人工介入服务，支持天气工具的批准、拒绝与参数修改。
 - [v0.8.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.8.0)：新增中断检查点、并行恢复与静态断点示例。
 - [v0.7.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.7.0)：新增运行时上下文与第四章人工介入示例，完善长期记忆对话。
 - [v0.6.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.6.0)：新增异常恢复、历史重放、状态分叉和 PostgreSQL 长期记忆示例。
