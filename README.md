@@ -64,6 +64,18 @@ langgraph/
 │   ├── 15_tool_node_runtime.ipynb # ToolRuntime 与 Command：工具更新状态
 │   ├── 16_wrap_tool_call.ipynb # 包装工具执行过程，按上下文配置重试
 │   └── 17_wrap_tool_call.ipynb # 按工具名称和参数缓存执行结果
+├── chapter05/            # 第五章：流式输出、子图与子图检查点
+│   ├── 01_values.ipynb          # 状态值：TypedDict 字段与节点输出
+│   ├── 02_messages.ipynb        # MessagesState + LLM 对话节点
+│   ├── 03_checkpoints.ipynb     # 检查点、interrupt 中断与状态历史
+│   ├── 04_custom.ipynb          # Runtime.stream_writer 流式输出与工具调用
+│   ├── 05_astream_events.ipynb  # astream / astream_events 流式事件
+│   ├── 06_subgraph_func.ipynb   # 子图以函数形式在父图节点中调用
+│   ├── 07_subgraph_node.ipynb   # 子图作为节点嵌入父图
+│   ├── 08_subgraph_checkpoint.ipynb # 子图检查点与 checkpoint_ns 区分
+│   ├── 09_subgraph_checkpoint_interrupt.ipynb # 子图内中断与恢复
+│   ├── 10_subgraph_checkpoint_memory.ipynb    # 子图编译检查点：多轮对话记忆
+│   └── 11_subgraph_checkpoint_more.ipynb      # 子图检查点进阶：批量提问互扰
 ├── hitl_demo/           # 本地 Agent Server / Studio 人工介入示例
 │   ├── langgraph.json          # 注册 graph、chat_graph，加载本地 .env
 │   └── src/
@@ -143,6 +155,20 @@ langgraph/
 - `16_wrap_tool_call`：通过 `wrap_tool_call` 包装工具执行过程，从 `UserContext.max_attempts` 读取尝试次数；捕获模拟的 `ConnectionError`，成功即停止，耗尽次数后返回失败消息。
 - `17_wrap_tool_call`：使用工具名称和参数的 JSON 字符串构造缓存键，重复查询命中缓存时跳过工具执行，并生成对应当前调用 ID 的工具消息。
 
+## 内容概览（chapter05）
+
+- `01_values`：用 `TypedDict` 声明状态字段，演示节点 A/B 分别写入 `node_a_output`、`node_b_output` 并流式返回（`time.sleep` 模拟耗时节点）。
+- `02_messages`：基于 `MessagesState` 构建 LLM 对话节点，重复调用 `invoke` 累积消息历史。
+- `03_checkpoints`：使用 `InMemorySaver` 检查点；通过 `interrupt()` 暂停、`Command(resume=...)` 恢复，并以 `stream_mode=["checkpoints"]` 观察检查点流、用 `get_state_history()` 查询历史状态。
+- `04_custom`：通过注入的 `Runtime.stream_writer` 在节点内流式输出文本；第二个单元演示 `ToolNode` + `ToolRuntime` + `Command` 的工具调用与状态更新。
+- `05_astream_events`：用 `astream` / `astream_events` 以流式模式观察节点执行与事件序列。
+- `06_subgraph_func`：编译独立子图（strip → punctuation 文本清洗），在父图节点中以 `subgraph.invoke()` 函数式调用，并用 `get_subgraphs()` 枚举。
+- `07_subgraph_node`：与 06 相反，将整个子图直接作为父图的一个节点（`add_node("subgraph_node", subgraph)`）。
+- `08_subgraph_checkpoint`：父图、子图共用 `InMemorySaver`；通过 `get_state(config, subgraphs=True)` 查看嵌入子图检查点，用 `checkpoint_ns` 区分不同子图的状态历史。
+- `09_subgraph_checkpoint_interrupt`：在子图节点中 `interrupt()` 暂停，父图检查点记录后由 `Command(resume=...)` 恢复执行。
+- `10_subgraph_checkpoint_memory`：子图 `compile(checkpointer=True)` 开启记忆（对比 per-invocation 无记忆与 per-thread 有记忆），父图注入 `InMemorySaver`，演示"我是老王 → 我是谁"的多轮对话记忆。
+- `11_subgraph_checkpoint_more`：父图一次携带多个提问依次调用子图；开启子图检查点后，同 `thread_id` 的多次提问会互相干扰（历史消息残留），演示 per-thread 记忆的副作用。
+
 ## 本地服务示例（hitl_demo）
 
 - `graph`（`src/agent.py:graph`）：在同一节点中依次询问姓名、年龄、性别，每次通过 `interrupt()` 暂停，收到回答后继续。
@@ -158,7 +184,7 @@ pip install -r requirements_full.txt
 # 在 .env 中填写 DEEPSEEK_API_KEY、DEEPSEEK_BASE_URL 等变量
 ```
 
-然后用 Jupyter Notebook 逐个打开 `chapter01/`、`chapter02/`、`chapter03/`、`chapter04/` 下的 notebook 运行即可。
+然后用 Jupyter Notebook 逐个打开 `chapter01/`、`chapter02/`、`chapter03/`、`chapter04/`、`chapter05/` 下的 notebook 运行即可。
 
 `chapter02/12_static_loop.ipynb` 和 `13_loop_goto.ipynb` 需要配置 DeepSeek API Key；天气和新闻工具返回的是硬编码演示数据，不是实时查询结果。工具失败由随机数模拟，运行过程和输出可能不同。
 
@@ -254,8 +280,15 @@ langgraph dev
 
 两个服务图都使用 `compile()` 导出，由 Agent Server 管理检查点；若直接在普通 Python 脚本中运行并恢复中断，需要自行配置检查点保存器与 `thread_id`。本地 `.env`、`.env.*`、服务运行数据和 Python 缓存均被 Git 忽略。
 
+### 第五章的运行要求
+
+`chapter05/02_messages`、`10_subgraph_checkpoint_memory` 和 `11_subgraph_checkpoint_more` 需要配置 DeepSeek API Key；其余示例（`01_values`、`03_checkpoints`、`04_custom`、`05_astream_events`、`06_subgraph_func`、`07_subgraph_node`、`08_subgraph_checkpoint`、`09_subgraph_checkpoint_interrupt`）不调用 LLM，可直接运行。`04_custom` 的第二个单元格涉及工具调用示例，需要 API Key 才能看到完整输出；`03_checkpoints` 按单元格顺序运行，先执行首次 `invoke` 触发中断，再通过 `Command(resume=...)` 恢复。
+
+第五章的子图示例说明如何使用函数或节点方式嵌入子图，以及 `checkpoint_ns` 如何区分父图与子图的检查点历史；`10` 和 `11` 通过 `compile(checkpointer=True)` 对比 per-invocation 与 per-thread 记忆行为。所有示例使用 `InMemorySaver` 内存检查点，不需要 PostgreSQL；重启内核后内存检查点会清空。
+
 ## 版本发布
 
+- [v0.11.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.11.0)：新增第五章：流式输出、子图（函数式/节点式）与子图检查点（含中断、记忆、批量提问互扰）示例。
 - [v0.10.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.10.0)：新增内置 ToolNode、工具运行时状态更新、工具重试与结果缓存示例。
 - [v0.9.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.9.0)：新增工具调用 Notebook 和本地人工介入服务，支持天气工具的批准、拒绝与参数修改。
 - [v0.8.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.8.0)：新增中断检查点、并行恢复与静态断点示例。
