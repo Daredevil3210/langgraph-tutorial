@@ -64,7 +64,7 @@ langgraph/
 │   ├── 15_tool_node_runtime.ipynb # ToolRuntime 与 Command：工具更新状态
 │   ├── 16_wrap_tool_call.ipynb # 包装工具执行过程，按上下文配置重试
 │   └── 17_wrap_tool_call.ipynb # 按工具名称和参数缓存执行结果
-├── chapter05/            # 第五章：流式输出、子图与子图检查点
+├── chapter05/            # 第五章：流式输出、子图与工作流模式
 │   ├── 01_values.ipynb          # 状态值：TypedDict 字段与节点输出
 │   ├── 02_messages.ipynb        # MessagesState + LLM 对话节点
 │   ├── 03_checkpoints.ipynb     # 检查点、interrupt 中断与状态历史
@@ -75,7 +75,19 @@ langgraph/
 │   ├── 08_subgraph_checkpoint.ipynb # 子图检查点与 checkpoint_ns 区分
 │   ├── 09_subgraph_checkpoint_interrupt.ipynb # 子图内中断与恢复
 │   ├── 10_subgraph_checkpoint_memory.ipynb    # 子图编译检查点：多轮对话记忆
-│   └── 11_subgraph_checkpoint_more.ipynb      # 子图检查点进阶：批量提问互扰
+│   ├── 11_subgraph_checkpoint_more.ipynb      # 子图检查点进阶：批量提问互扰
+│   ├── 12_more_subgraph.ipynb   # 同一父节点调用多个有记忆的子图
+│   ├── 13_more_subgraph_nodes.ipynb # 独立父节点调用子图与条件分发
+│   ├── 14_subgraph_stateless.ipynb # 无记忆与按线程记忆的列表累积对比
+│   ├── 15_subgraph_stream.ipynb # subgraphs=True：父子图状态更新流
+│   ├── 16_subgraph_llm_stream.ipynb # 子图模型消息流与多轮记忆
+│   ├── 17_subgraph_goto.ipynb   # Command.PARENT：子图跳转到父图节点
+│   ├── 18_prompt_chaining.ipynb # 提示词串联与条件质量检查
+│   ├── 19_Parallelization.ipynb # 并行生成笑话、故事和诗歌后汇总
+│   ├── 20_router.ipynb         # 结构化输出选择生成任务
+│   ├── 21_Orchestrator_worker.ipynb # Send 动态分配报告章节任务
+│   ├── 22_evaluator_optimizer.ipynb # 评估反馈与循环改进
+│   └── 23_agent.ipynb          # 模型与 ToolNode 工具调用循环
 ├── hitl_demo/           # 本地 Agent Server / Studio 人工介入示例
 │   ├── langgraph.json          # 注册 graph、chat_graph，加载本地 .env
 │   └── src/
@@ -168,6 +180,18 @@ langgraph/
 - `09_subgraph_checkpoint_interrupt`：在子图节点中 `interrupt()` 暂停，父图检查点记录后由 `Command(resume=...)` 恢复执行。
 - `10_subgraph_checkpoint_memory`：子图 `compile(checkpointer=True)` 开启记忆（对比 per-invocation 无记忆与 per-thread 有记忆），父图注入 `InMemorySaver`，演示"我是老王 → 我是谁"的多轮对话记忆。
 - `11_subgraph_checkpoint_more`：父图一次携带多个提问依次调用子图；开启子图检查点后，同 `thread_id` 的多次提问会互相干扰（历史消息残留），演示 per-thread 记忆的副作用。
+- `12_more_subgraph`：在同一个父节点内依次调用水果与蔬菜子图，观察两次父图调用中的子图消息与检查点命名空间。
+- `13_more_subgraph_nodes`：将两个子图的调用拆为独立父节点，按输入选择一个或两个分支，各自维护消息历史。
+- `14_subgraph_stateless`：批量清洗文本，通过切换子图 `checkpointer=False` 与 `True` 对比子图列表累积；父图的 `output_texts` 另有追加 reducer。
+- `15_subgraph_stream`：使用 `subgraphs=True` 和 `stream_mode=["updates"]`，观察子图清洗步骤及父节点的状态更新。
+- `16_subgraph_llm_stream`：使用 `stream_mode=["messages"]` 输出子图内模型的消息片段，并通过同一线程继续提问。
+- `17_subgraph_goto`：子图返回 `Command(graph=Command.PARENT, goto="node_b")`，更新父图状态并跳转到父节点；`destinations` 用于描述图的可视化路线。
+- `18_prompt_chaining`：先生成笑话，通过简单标点检查决定结束，或继续添加双关语、润色反转。
+- `19_Parallelization`：并行生成同一主题的笑话、故事和诗歌，用列表形式的入边等待三个分支完成后汇总。
+- `20_router`：模型通过 Pydantic 结构化输出选择 `story`、`joke` 或 `poem`，条件边仅执行相应生成节点。
+- `21_Orchestrator_worker`：规划器生成报告章节，`Send` 为各章动态创建工作任务，通过追加 reducer 汇总章节并拼接 Markdown 报告。
+- `22_evaluator_optimizer`：评估器返回评分与反馈；评分为“好笑”时结束，否则带反馈重新生成，使用 `recursion_limit` 限制执行步数。
+- `23_agent`：通过 `bind_tools()` 和 `ToolNode` 实现模型 → 天气工具 → 模型的循环，直到模型不再请求工具。
 
 ## 本地服务示例（hitl_demo）
 
@@ -286,8 +310,19 @@ langgraph dev
 
 第五章的子图示例说明如何使用函数或节点方式嵌入子图，以及 `checkpoint_ns` 如何区分父图与子图的检查点历史；`10` 和 `11` 通过 `compile(checkpointer=True)` 对比 per-invocation 与 per-thread 记忆行为。所有示例使用 `InMemorySaver` 内存检查点，不需要 PostgreSQL；重启内核后内存检查点会清空。
 
+### 第五章子图进阶与工作流模式（12–23）
+
+`12`、`13`、`16` 和 `18`–`23` 需要本地 `.env` 中的 DeepSeek API Key；`14`、`15`、`17` 不调用模型。新增示例均不需要 PostgreSQL。部分 Notebook 通过 `draw_mermaid_png()` 在线生成图示，需要网络访问图像服务；图示生成失败时仍可单独运行前面的图执行代码。
+
+`12`–`14` 请在同一内核中按顺序运行并比较两次输出。`12` 在一个父节点里调用两个子图，`13` 将调用拆成独立父节点，适合观察调用位置与子图状态隔离；`13` 中省略输入字段不会清除父图已有的字段，若要跳过一个分支，应显式传入空字符串或使用新的线程。`14` 默认启用子图按线程记忆，用于观察列表累积，切换为 `checkpointer=False` 后重新运行整个单元格进行对比；父图仍会追加 `output_texts`，子图无记忆并不代表父图无记忆。
+
+`15` 的流同时包含父图与子图更新；`16` 使用包含命名空间、流模式和消息数据的三元组，`chunk[2][0].content` 取出消息文本。`17` 的 `Command.PARENT` 指定父图，`goto` 决定实际跳转，`destinations` 不会触发节点执行；默认示例跳过 `node_a`，最终状态包含 `visited_b=True`。
+
+建议按 `18_prompt_chaining` → `19_Parallelization` → `20_router` → `21_Orchestrator_worker` → `22_evaluator_optimizer` → `23_agent` 学习工作流模式。`18` 仅用英文问号或感叹号判断是否通过，不代表真实质量评估，通过时会直接返回初始笑话而没有 `final_joke`。`21` 的章节数量由规划器决定，示例直接拼接工作节点的结果。`22` 的 `recursion_limit=5` 是超步上限，包含生成和评估节点的执行；若多次未通过，示例捕获 `GraphRecursionError` 并提示提高上限，其他异常正常暴露。`23` 的天气工具返回模拟数据，未配置检查点，不会跨调用保存聊天记录。
+
 ## 版本发布
 
+- [v0.12.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.12.0)：新增第五章 12–23，涵盖多子图调用、记忆累积、子图流式输出、父图跳转及六种工作流模式；修正评估路由与异常处理，补充运行说明。
 - [v0.11.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.11.0)：新增第五章：流式输出、子图（函数式/节点式）与子图检查点（含中断、记忆、批量提问互扰）示例。
 - [v0.10.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.10.0)：新增内置 ToolNode、工具运行时状态更新、工具重试与结果缓存示例。
 - [v0.9.0](https://github.com/Daredevil3210/langgraph-tutorial/releases/tag/v0.9.0)：新增工具调用 Notebook 和本地人工介入服务，支持天气工具的批准、拒绝与参数修改。
